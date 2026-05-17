@@ -4,21 +4,7 @@ A terminal-UI memory & process inspector built for the age of always-on AI dev t
 
 `htop` shows you everything. `memhog` shows you what's actually eating your laptop — grouped by what it is (Claude Code, browser, LLM server, editor, container, runtime), with trend arrows, sparklines, and one-key reaping for the usual suspects.
 
-```
-⬢ memhog                                                hostname    142 procs · 14:32:08
-
-mem    ████████████  56%   ▁▂▃▄▆▇▆▅   32GB · 14GB free
-cpu    ███           18%   ▁▁▂▂▃▂▁▁   1.21 0.98 0.82 · 10c
-
-groups  ⢿ claude:7 5.8GB · ⠶ browser:24 3.2GB · ⠟ editor:3 2.1GB · ⣶ vm:2 1.4GB · +4
-
-    process                              mem      Δ↓     cpu      time         pid
-  ▎ ⢿ Claude Code · 2.1.143             1.8GB   ▲42    24.1%   01:24:13     54321
-    ⢿ Claude Code · 2.1.143             1.1GB           8.2%   00:42:01     54322
-    ⣿ ollama                            980MB    ▼12    0.1%   06:11:55     43210
-    ⠶ Google Chrome Helper              512MB           2.4%   02:03:11     61234
-    ...
-```
+![memhog screenshot](screenshot.webp)
 
 ## Why
 
