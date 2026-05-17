@@ -1,0 +1,19 @@
+# build output
+/memhog
+/memhog.exe
+/dist/
+
+# go workspace
+go.work
+go.work.sum
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# test / coverage
+*.out
+coverage.txt
