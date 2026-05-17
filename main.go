@@ -326,8 +326,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "o":
 		for i, p := range rows {
-			n := strings.ToLower(p.name)
-			if strings.Contains(n, "ollama") || strings.Contains(n, "omlx") {
+			if p.category == "AI · LLM" {
 				m.cursor = i
 				m.setStatus("→ " + p.name)
 				break
@@ -432,8 +431,7 @@ func (m *model) runGuard() {
 		if p.pid == self {
 			continue
 		}
-		ln := strings.ToLower(p.name)
-		if strings.Contains(ln, "ollama") || strings.Contains(ln, "omlx") {
+		if p.category == "AI · LLM" {
 			continue
 		}
 		if p.stopped {

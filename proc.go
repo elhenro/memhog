@@ -226,6 +226,12 @@ var versionRe = regexp.MustCompile(`^\d+\.\d+\.\d+(\.\d+)?$`)
 // when raw name is version-only (e.g. "2.1.143"), we look at exe/cmdline to
 // give it a meaningful prefix; that version becomes the suffix.
 func resolveDisplay(raw, exe, cmd string) (string, string) {
+	// omlx ships as `python3 -m omlx.cli serve` inside oMLX.app — raw name is
+	// "python3" which hides the LLM server. override before the meaningful-raw
+	// early return.
+	if omlxMatch(exe, cmd) {
+		return "oMLX", ""
+	}
 	if looksMeaningful(raw) {
 		return raw, ""
 	}
@@ -292,6 +298,13 @@ func looksMeaningful(n string) bool {
 		}
 	}
 	return digits == 0 || dots == 0
+}
+
+// omlxMatch — oMLX.app bundles python3; inspect exe/cmd for the app path or
+// the `omlx.cli` module marker.
+func omlxMatch(exe, cmd string) bool {
+	l := strings.ToLower(exe + "\x00" + cmd)
+	return strings.Contains(l, "/omlx.app/") || strings.Contains(l, "omlx.cli")
 }
 
 // claudeCodeMatch — heuristics for the official `claude` CLI (npm
