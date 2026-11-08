@@ -1,32 +1,52 @@
 # memhog
 
-A terminal-UI memory & process inspector built for the age of always-on AI dev tools.
+memhog is a memory and process viewer for the terminal. It is made for people
+who keep AI tools running all day: Claude Code, Ollama, editors, browsers and
+containers.
 
-`htop` shows you everything. `memhog` shows you what's actually eating your laptop — grouped by what it is (Claude Code, browser, LLM server, editor, container, runtime), with trend arrows, sparklines, and one-key reaping for the usual suspects.
+`htop` and `top` show every process as a separate line. That makes it hard to
+see the real question: *which app is using my RAM?* memhog answers that. It
+groups processes by app, shows how much memory each app uses in total, and lets
+you stop the big ones with one key.
 
 ![memhog screenshot](screenshot.webp)
 
-## Why
+## Why use it
 
-If you run Claude Code, Cursor, an Ollama daemon, a couple browsers, and Docker on the same machine, your memory pressure isn't `top -o MEM` shaped — it's *categorical*. Six `Claude Code · 2.1.143` rows mean nothing in isolation; `claude:7 5.8GB` means a lot.
+If you run Claude Code, Cursor, an Ollama server, two browsers and Docker on the
+same laptop, your memory problem has a shape. It is not one bad process. It is
+an app that starts 30 helper processes.
 
-memhog adds three things `htop` doesn't:
+memhog gives you three things that `htop` does not:
 
-- **Two levels of grouping.** Process families (Claude Code, AI · LLM, Browser, Editor, VM, Runtime, …) collapse into a one-line band at the top, and the list itself is grouped by *app*: 32 `Brave Browser Helper (Renderer)` procs become one `Brave Browser ×32 6.3GB` row. Press `e` to expand a group in place, `u` to fall back to one row per process. Press `1`–`9` to filter to a category.
-- **Claude lifecycle awareness.** `C` reaps idle `--bg-spare` / `--bg-pty-host` workers but keeps the daemon root and any pty-host with a live TTY. `X` nukes everything Anthropic-owned (daemon, foreground claude, MCP helpers, claude.app) — except your own ancestor chain, so you can't accidentally kill the shell you're sitting in.
-- **A memory guard.** `L` toggles a watchdog that auto-pauses (SIGSTOP, not SIGKILL) the biggest non-LLM, non-system process when available RAM drops below your cap. Cap is adjustable live with `+` / `-`.
+- **Grouping on two levels.** At the top, a single line shows the total memory
+  of each category: Claude Code, AI · LLM, Browser, Editor, VM, Runtime and
+  others. The list below is grouped by app. For example, 32
+  `Brave Browser Helper (Renderer)` processes become one row:
+  `Brave Browser ×32 6.3GB`. Press `e` to open a group and see its processes,
+  or `u` to switch back to one row per process.
+- **Help with Claude processes.** Press `C` to remove idle Claude background
+  workers. It keeps the main daemon and any worker that is still connected to a
+  terminal. Press `X` to stop everything that belongs to Anthropic. It never
+  stops the shell, terminal or Claude session that started memhog.
+- **A memory guard.** Press `L` to turn on a watchdog. When free memory drops
+  below your limit, memhog pauses the biggest safe process. Pausing is not the
+  same as killing: the process can continue later. Change the limit with `+`
+  and `-`.
 
-Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [gopsutil](https://github.com/shirou/gopsutil). Pure Go, single static binary, no daemon, no config file.
+memhog is written in Go and uses [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+and [gopsutil](https://github.com/shirou/gopsutil). It is one binary. It has no
+daemon and no config file.
 
 ## Install
 
-### Go
+With Go:
 
 ```sh
 go install github.com/elhenro/memhog@latest
 ```
 
-### From source
+From source:
 
 ```sh
 git clone https://github.com/elhenro/memhog
@@ -34,9 +54,8 @@ cd memhog
 go build -o ~/.local/bin/memhog .
 ```
 
-### Binary releases
-
-Download from [Releases](https://github.com/elhenro/memhog/releases) — darwin (arm64/amd64), linux (arm64/amd64), windows (amd64).
+Or download a binary from [Releases](https://github.com/elhenro/memhog/releases):
+macOS (arm64 and amd64), Linux (arm64 and amd64) and Windows (amd64).
 
 ## Run
 
@@ -44,91 +63,109 @@ Download from [Releases](https://github.com/elhenro/memhog/releases) — darwin 
 memhog
 ```
 
-That's the whole CLI.
+There are no flags to learn. Press `?` inside the app to see the key list.
 
 ## Keys
 
-### Navigation
-| key | action |
-|---|---|
-| `j` / `k` / `↑` / `↓` | move cursor |
-| `g` / `G` | top / bottom |
-| `ctrl-d` / `ctrl-u` | half-page |
-| `ctrl-f` / `ctrl-b` / `pgdn` / `pgup` | page |
-| `/` | filter (incremental, case-insensitive; `esc` cancels, pasted text works) |
-| `c` / `0` | clear all filters |
-| `1`–`9` | filter to the Nth group from the band (press again to clear) |
-| `s` | cycle sort: `mem → cpu → Δ (growth) → category → name → time → pid` |
-| `n` | toggle raw process names (show pre-resolution names — useful when display name guessed wrong) |
-| `e` / `enter` | expand / collapse the selected app group in place |
-| `u` | toggle grouping: app families vs one row per process |
-| `d` | toggle the detail pane for the selected row (group summary or process) |
-| `?` | toggle key help |
+### Moving around
 
-### Process control
-| key | action |
+| key | what it does |
 |---|---|
-| `space` / `p` | pause selected row (a collapsed group pauses all its members) |
-| `r` | resume selected row (all members of a collapsed group) |
-| `R` | resume every paused process at once |
-| `t` | terminate selected (SIGTERM, confirm) |
-| `K` | kill selected (SIGKILL, confirm) |
-| `C` | claude-cleanup: reap idle `--bg-spare` / `--bg-pty-host` (confirm) |
-| `X` | NUKE: kill every claude/anthropic process (except memhog's own ancestor chain) (confirm) |
-| `o` | jump cursor to first ollama/omlx process |
+| `j` / `k` / `↑` / `↓` | move the cursor |
+| `g` / `G` | go to the top / bottom |
+| `ctrl-d` / `ctrl-u` | move half a page |
+| `ctrl-f` / `ctrl-b` / `pgdn` / `pgup` | move one page |
+| `/` | filter by name (case does not matter; `esc` cancels, paste works) |
+| `c` / `0` | clear all filters |
+| `1`–`9` | show only the Nth category (press again to clear) |
+| `s` | change the sort order: `mem → cpu → Δ (growth) → category → name → time → pid` |
+| `n` | show the raw process name instead of the friendly one |
+| `e` / `enter` | open or close the selected app group |
+| `u` | group by app, or show one row per process |
+| `d` | show details for the selected row |
+| `?` | show or hide the key help |
+
+### Working with processes
+
+| key | what it does |
+|---|---|
+| `space` / `p` | pause the selected row (a closed group pauses all its processes) |
+| `r` | continue the selected row |
+| `R` | continue every paused process |
+| `t` | stop the selected row politely (SIGTERM, asks first) |
+| `K` | kill the selected row (SIGKILL, asks first) |
+| `C` | remove idle Claude background workers (asks first) |
+| `X` | stop every Claude and Anthropic process (asks first) |
+| `o` | jump to the first Ollama or oMLX process |
 
 ### Memory guard
-| key | action |
-|---|---|
-| `L` | toggle guard (auto-pause big non-LLM, non-critical procs when free RAM < cap) |
-| `+` / `=` / `-` | adjust cap in 512MB steps |
 
-### Tick rate
-| key | action |
+| key | what it does |
 |---|---|
-| `<` | slower (+500ms) |
-| `>` | faster (−500ms, min 500ms) |
+| `L` | turn the guard on or off |
+| `+` / `=` / `-` | change the free-memory limit in 512MB steps |
 
-### Quit
-| key | action |
+### Refresh speed and quit
+
+| key | what it does |
 |---|---|
+| `<` | refresh slower (+500ms) |
+| `>` | refresh faster (−500ms, minimum 500ms) |
 | `q` / `ctrl-c` | quit |
 
-## What gets categorized as what
+## How processes are grouped
 
-- **Claude Code** — `@anthropic-ai/claude-code` npm CLI, `~/.claude/local/` shimmed binary, and the version-string-as-process-name pattern (`2.1.143`) it uses.
-- **AI · LLM** — ollama, omlx, llama-server, lm studio, llamafile, vllm, mlx_lm.
-- **Browser** — Chrome (+ helpers), Safari, Firefox, Edge, Brave, Vivaldi, Arc, WebKit, Chromium.
-- **Editor** — VS Code (+ helpers), Cursor, Windsurf, Zed, Sublime, Neovim.
-- **VM · Container** — Docker, OrbStack, Qemu, Podman, VMware, Parallels, Lima.
-- **System** — kernel_task, launchd, WindowServer, loginwindow, syslogd, configd, powerd, etc. (also can't be killed by the guard).
+- **Claude Code** — the `@anthropic-ai/claude-code` package, the binary in
+  `~/.claude/local/`, and processes that use a version number as their name
+  (for example `2.1.143`).
+- **AI · LLM** — ollama, omlx, llama-server, LM Studio, llamafile, vLLM, mlx_lm.
+- **Browser** — Chrome and its helpers, Safari, Firefox, Edge, Brave, Vivaldi,
+  Arc, WebKit, Chromium.
+- **Editor** — VS Code and its helpers, Cursor, Windsurf, Zed, Sublime, Neovim.
+- **VM · Container** — Docker, OrbStack, QEMU, Podman, VMware, Parallels, Lima.
+- **System** — kernel_task, launchd, WindowServer, loginwindow, syslogd, configd,
+  powerd and similar. The guard never pauses these.
 - **Runtime** — node, python, ruby, go, java, deno, bun.
 - **Chat · Meet** — Slack, Discord, Telegram, WhatsApp, Signal, Zoom, Teams.
 - **Other** — everything else.
 
-The classifier is heuristic and lives in `proc.go` — PRs welcome to expand it.
+The app name is the process name with common helper words removed. For example,
+`Brave Browser Helper (GPU)` becomes `Brave Browser`. These rules are
+guesses based on names, and they live in `proc.go`. Pull requests that improve
+them are welcome.
 
 ## Safety
 
-- **Claude nuke (`X`) never kills memhog's own ancestor chain** — walks parent PIDs up to 20 hops at startup and excludes them. So the shell / terminal / parent claude session that launched memhog survives.
-- **Claude cleanup (`C`) keeps the daemon root** and any pty-host worker with a `/dev/ttys*` open (someone is actively using it). Escalates SIGTERM → SIGKILL after 1s for unresponsive targets.
-- **Guard (`L`) refuses to touch** `kernel_task`, `launchd`, `WindowServer`, `loginwindow`, `coreaudio`, `syslogd`, `configd`, `powerd`, ollama, omlx, memhog itself, and anything already stopped.
-- **Per-process actions always confirm** before sending signals, and `t` / `K` / `space` refuse to touch memhog itself, its ancestor chain, or kernel-critical processes.
+- **The nuke key (`X`) never stops memhog's own parent processes.** At startup
+  memhog walks up its parent chain (up to 20 steps) and keeps those processes
+  alive. Your shell and terminal survive.
+- **Cleanup (`C`) keeps the Claude daemon** and any worker that still has a
+  terminal attached. If memhog cannot check this (for example when `lsof` is
+  missing), it keeps the worker instead of guessing. Workers that do not stop
+  after a polite request are killed after one second.
+- **The guard (`L`) never touches** `kernel_task`, `launchd`, `WindowServer`,
+  `loginwindow`, `coreaudio`, `syslogd`, `configd`, `powerd`, ollama, omlx,
+  memhog itself, its parent chain, or a process that is already paused.
+- **Stopping and killing ask first.** `t`, `K`, `C` and `X` show a confirmation
+  dialog with the list of processes. Pause and continue (`space`, `r`, `R`) act
+  immediately. All of them refuse to touch memhog itself, its parent chain, or
+  critical system processes.
 
 ## Platform support
 
-- **macOS** — primary target. Tested on arm64 (M-series) and amd64.
-- **Linux** — should work; categorization heuristics tuned for macOS process names (Claude Code Helper, Code Helper (Renderer), etc.) so some categories may land in "Other".
-- **Windows** — builds and runs (list, sort, filter, term/kill). Windows has no
-  `SIGSTOP`, so pause/resume and the memory guard are disabled there and say so. TTY-aware
-  claude-cleanup keeps pty-hosts when `lsof` is unavailable.
+- **macOS** — the main target. Tested on Apple Silicon and Intel.
+- **Linux** — works, but the name rules were written for macOS process names,
+  so some processes may end up in "Other".
+- **Windows** — builds and runs: list, sort, filter, terminate and kill work.
+  Windows has no `SIGSTOP`, so pause, continue and the memory guard are turned
+  off and the app tells you so.
 
-## Roadmap
+## Planned
 
-- per-process I/O & open-fd stats in detail pane
-- save sort / filter / guard preset to `~/.config/memhog/config.toml`
-- export current snapshot (CSV / JSON) — for "what was running when the machine got slow"
-- treeview mode (parent → child indented)
+- per-process disk and file-handle details in the detail pane
+- save sort, filter and guard settings to `~/.config/memhog/config.toml`
+- export the current snapshot as CSV or JSON
+- a tree view that shows parent and child processes
 
 ## License
 
