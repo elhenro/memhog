@@ -1,8 +1,8 @@
 # memhog
 
 memhog is a memory and process viewer for the terminal. It is made for people
-who keep AI tools running all day: Claude Code, Ollama, editors, browsers and
-containers.
+who keep AI tools running all day: opencode, omp, dsh, claude-code, codex and
+other coding agents, together with Ollama, editors, browsers and containers.
 
 `htop` and `top` show every process as a separate line. That makes it hard to
 see the real question: *which app is using my RAM?* memhog answers that. It
@@ -13,22 +13,23 @@ you stop the big ones with one key.
 
 ## Why use it
 
-If you run Claude Code, Cursor, an Ollama server, two browsers and Docker on the
-same laptop, your memory problem has a shape. It is not one bad process. It is
-an app that starts 30 helper processes.
+If you run opencode, omp, dsh, claude-code and codex next to an Ollama server,
+two browsers and Docker on the same laptop, your memory problem has a shape. It
+is not one bad process. It is an app that starts 30 helper processes.
 
 memhog gives you three things that `htop` does not:
 
 - **Grouping on two levels.** At the top, a single line shows the total memory
-  of each category: Claude Code, AI · LLM, Browser, Editor, VM, Runtime and
+  of each category: AI · Agent, AI · LLM, Browser, Editor, VM, Runtime and
   others. The list below is grouped by app. For example, 32
   `Brave Browser Helper (Renderer)` processes become one row:
   `Brave Browser ×32 6.3GB`. Press `e` to open a group and see its processes,
   or `u` to switch back to one row per process.
-- **Help with Claude processes.** Press `C` to remove idle Claude background
-  workers. It keeps the main daemon and any worker that is still connected to a
-  terminal. Press `X` to stop everything that belongs to Anthropic. It never
-  stops the shell, terminal or Claude session that started memhog.
+- **Help with stuck agents.** If you use Claude Code, press `C` to remove idle
+  Claude background workers. It keeps the main daemon and any worker that is
+  still connected to a terminal. Press `X` to stop everything that belongs to
+  Anthropic. It never stops the shell, terminal or Claude session that started
+  memhog.
 - **A memory guard.** Press `L` to turn on a watchdog. When free memory drops
   below your limit, memhog pauses the biggest safe process. Pausing is not the
   same as killing: the process can continue later. Change the limit with `+`
@@ -115,9 +116,13 @@ There are no flags to learn. Press `?` inside the app to see the key list.
 
 ## How processes are grouped
 
-- **Claude Code** — the `@anthropic-ai/claude-code` package, the binary in
-  `~/.claude/local/`, and processes that use a version number as their name
-  (for example `2.1.143`).
+- **AI · Agent** — coding agents: opencode, omp, dsh, claude-code, codex, aider,
+  goose and crush. They are found by their binary name, or by the package path
+  when they run behind node or bun. Claude Code is found through its install
+  paths (`@anthropic-ai/claude-code`, `~/.claude/local/`) and by the version
+  number it uses as a process name (for example `2.1.143`). A process that only
+  mentions an agent name in an argument stays where it belongs, so an editor
+  with `~/.claude/settings.json` open is not renamed.
 - **AI · LLM** — ollama, omlx, llama-server, LM Studio, llamafile, vLLM, mlx_lm.
 - **Browser** — Chrome and its helpers, Safari, Firefox, Edge, Brave, Vivaldi,
   Arc, WebKit, Chromium.
@@ -145,7 +150,8 @@ them are welcome.
   after a polite request are killed after one second.
 - **The guard (`L`) never touches** `kernel_task`, `launchd`, `WindowServer`,
   `loginwindow`, `coreaudio`, `syslogd`, `configd`, `powerd`, ollama, omlx,
-  memhog itself, its parent chain, or a process that is already paused.
+  coding agents, memhog itself, its parent chain, or a process that is already
+  paused.
 - **Stopping and killing ask first.** `t`, `K`, `C` and `X` show a confirmation
   dialog with the list of processes. Pause and continue (`space`, `r`, `R`) act
   immediately. All of them refuse to touch memhog itself, its parent chain, or

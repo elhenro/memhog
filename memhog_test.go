@@ -13,7 +13,7 @@ func testModel() model {
 		procs: []procRow{
 			{pid: 1, name: "chrome", category: "Browser", memMB: 800, rawName: "chrome"},
 			{pid: 2, name: "chrome helper", category: "Browser", memMB: 300, rawName: "chrome"},
-			{pid: 3, name: "claude", category: "Claude Code", memMB: 500, rawName: "claude"},
+			{pid: 3, name: "claude", category: "AI · Agent", memMB: 500, rawName: "claude"},
 			{pid: 4, name: "syscored", category: "Other", memMB: 50, rawName: "syscored"},
 		},
 		ancestors: map[int32]bool{1: true},
@@ -47,7 +47,7 @@ func TestFilterIntersectsCategory(t *testing.T) {
 func TestCursorClampedAfterFilterNarrows(t *testing.T) {
 	m := testModel()
 	m.cursor = 3
-	m.catFilter = "Claude Code"
+	m.catFilter = "AI · Agent"
 	m.clampCursor()
 	if m.cursor != 0 {
 		t.Fatalf("cursor not clamped, got %d", m.cursor)
@@ -265,5 +265,46 @@ func TestTTYDetectionFailureKeepsPtyHosts(t *testing.T) {
 	if len(pl.targets) != 0 || pl.keptTTY != 1 {
 		t.Fatalf("unknown tty state must keep pty-hosts, got targets=%d kept=%d",
 			len(pl.targets), pl.keptTTY)
+	}
+}
+
+func TestCodingAgentDetection(t *testing.T) {
+	cases := []struct {
+		exe, cmd, want string
+	}{
+		{"/opt/homebrew/bin/opencode", "opencode", "opencode"},
+		{"", "node /Users/me/.npm-global/lib/node_modules/@sst/opencode/bin/opencode", "opencode"},
+		{"/usr/local/bin/omp", "omp --serve", "omp"},
+		{"/usr/local/bin/dsh", "dsh", "dsh"},
+		{"/usr/local/bin/codex", "codex", "codex"},
+		{"", "node /Users/me/.npm/lib/node_modules/@openai/codex/bin/codex.js", "codex"},
+		{"", "node /Users/me/.local/bin/claude", "Claude Code"},
+		// must not false-positive on words that merely contain the token
+		{"/usr/local/bin/docker", "docker compose up", ""},
+		{"/usr/bin/vim", "vim /Users/me/codex.md", ""},
+		{"/usr/bin/vim", "vim /Users/me/.claude/settings.json", ""},
+	}
+	for _, c := range cases {
+		got, _ := agentLabel(c.exe, c.cmd)
+		if got != c.want {
+			t.Fatalf("agentLabel(%q, %q) = %q, want %q", c.exe, c.cmd, got, c.want)
+		}
+	}
+}
+
+func TestAgentDisplayAndCategory(t *testing.T) {
+	name, ver := resolveDisplay("2.1.143", "/Users/me/.local/bin/claude", "node cli.js")
+	if name != "Claude Code · 2.1.143" || ver != "2.1.143" {
+		t.Fatalf("claude display = %q/%q", name, ver)
+	}
+	name, _ = resolveDisplay("node", "/opt/homebrew/bin/opencode", "opencode --serve")
+	if name != "opencode" {
+		t.Fatalf("opencode display = %q", name)
+	}
+	if cat := detectCategory("node", "/opt/homebrew/bin/opencode", "opencode", "opencode"); cat != "AI · Agent" {
+		t.Fatalf("opencode category = %q", cat)
+	}
+	if cat := detectCategory("2.1.143", "/Users/me/.local/bin/claude", "node cli.js", "Claude Code · 2.1.143"); cat != "AI · Agent" {
+		t.Fatalf("claude category = %q", cat)
 	}
 }

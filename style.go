@@ -72,7 +72,7 @@ var (
 	colSel    = lipgloss.Color("#ffffff")
 
 	// category hues — desaturated, distinct
-	colCatClaude  = lipgloss.Color("#bf8cf2") // violet
+	colCatAgent   = lipgloss.Color("#bf8cf2") // violet
 	colCatLLM     = lipgloss.Color("#64d2ff") // cyan
 	colCatBrowser = lipgloss.Color("#ffd060") // amber
 	colCatEditor  = lipgloss.Color("#7fd182") // sage

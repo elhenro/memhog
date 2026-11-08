@@ -293,18 +293,20 @@ func resolveDisplay(raw, exe, cmd string) (string, string) {
 	if omlxMatch(exe, cmd) {
 		return "oMLX", ""
 	}
-	if looksMeaningful(raw) {
-		return raw, ""
-	}
 	ver := ""
 	if versionRe.MatchString(raw) {
 		ver = raw
 	}
-	if claudeCodeMatch(exe, cmd) {
+	// coding agents often run as `node /…/opencode`; the raw name would be
+	// "node", so resolve them from exe/cmdline before the raw-name shortcut.
+	if label, ok := agentLabel(exe, cmd); ok {
 		if ver != "" {
-			return "Claude Code · " + ver, ver
+			return label + " · " + ver, ver
 		}
-		return "Claude Code", ver
+		return label, ver
+	}
+	if looksMeaningful(raw) {
+		return raw, ""
 	}
 	// fall back to original chain
 	if exe != "" {
@@ -390,14 +392,99 @@ func claudeCodeMatch(exe, cmd string) bool {
 	return false
 }
 
+// agentTools maps coding-agent binaries to display names. Tokens match only on
+// a path or word boundary, so "compose" does not look like "omp".
+var agentTools = []struct{ tok, label string }{
+	{"opencode", "opencode"},
+	{"omp", "omp"},
+	{"dsh", "dsh"},
+	{"codex", "codex"},
+	{"aider", "aider"},
+	{"goose", "goose"},
+	{"crush", "crush"},
+}
+
+// agentMarkers catch agents that run behind a node/bun wrapper: the binary is
+// the interpreter, the agent is the script path.
+var agentMarkers = []struct{ marker, label string }{
+	{"@sst/opencode", "opencode"},
+	{"opencode/bin", "opencode"},
+	{"@openai/codex", "codex"},
+	{"codex-cli", "codex"},
+}
+
+// agentLabel returns the display name for a coding agent, if this process is
+// one. Only the executable and the program being run are inspected, so an
+// editor that merely has a file called codex.md open is not mislabelled.
+// Claude Code is matched by its install paths, never by the bare word, for the
+// same reason.
+func agentLabel(exe, cmd string) (string, bool) {
+	if claudeCodeMatch(exe, cmd) {
+		return "Claude Code", true
+	}
+	head := exe
+	if f := strings.Fields(cmd); len(f) > 0 {
+		head += "\x00" + f[0]
+	}
+	l := strings.ToLower(head)
+	for _, t := range agentTools {
+		if wordContains(l, t.tok) {
+			return t.label, true
+		}
+	}
+	lc := strings.ToLower(cmd)
+	for _, m := range agentMarkers {
+		if strings.Contains(lc, m.marker) {
+			return m.label, true
+		}
+	}
+	return "", false
+}
+
+// wordContains reports whether tok appears in s as a whole path component or
+// word, not as part of a longer word.
+func wordContains(s, tok string) bool {
+	for i := 0; ; {
+		j := strings.Index(s[i:], tok)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(tok)
+		if (start == 0 || isWordSep(s[start-1])) && (end == len(s) || isWordSep(s[end])) {
+			return true
+		}
+		i = start + 1
+	}
+}
+
+func isWordSep(b byte) bool {
+	switch b {
+	case '/', '\\', ' ', '\t', 0, '.', '-', '_', ':', '=', '(', ')', '\'', '"':
+		return true
+	}
+	return false
+}
+
+// isAgentProc also recognises rows whose display name was already resolved.
+func isAgentProc(exe, cmd, disp string) bool {
+	if _, ok := agentLabel(exe, cmd); ok {
+		return true
+	}
+	for _, t := range agentTools {
+		if disp == t.label || strings.HasPrefix(disp, t.label+" \u00b7 ") {
+			return true
+		}
+	}
+	return strings.HasPrefix(disp, "Claude Code")
+}
+
 // detectCategory groups a process into a coarse bucket for the summary band.
 func detectCategory(rawName, exe, cmd, disp string) string {
 	l := strings.ToLower(rawName + "\x00" + exe + "\x00" + cmd + "\x00" + disp)
 	switch {
-	case strings.Contains(l, "claude code"), strings.Contains(l, "@anthropic-ai/claude-code"),
-		strings.Contains(l, "claude-code/cli"), strings.Contains(l, "/.claude/local/"),
-		strings.Contains(l, "bee ") && strings.Contains(l, "run "):
-		return "Claude Code"
+	case isAgentProc(exe, cmd, disp):
+		return "AI · Agent"
 	case strings.Contains(l, "ollama"), strings.Contains(l, "omlx"),
 		strings.Contains(l, "llama-server"),
 		strings.Contains(l, "lm studio"), strings.Contains(l, "lmstudio"),
@@ -441,8 +528,8 @@ func detectCategory(rawName, exe, cmd, disp string) string {
 
 func catColor(cat string) lipgloss.Color {
 	switch cat {
-	case "Claude Code":
-		return colCatClaude
+	case "AI · Agent":
+		return colCatAgent
 	case "AI · LLM":
 		return colCatLLM
 	case "Browser":
@@ -465,7 +552,7 @@ func catColor(cat string) lipgloss.Color {
 // catGlyph: braille tags, monospace, no emoji presentation.
 func catGlyph(cat string) string {
 	switch cat {
-	case "Claude Code":
+	case "AI · Agent":
 		return "⢿"
 	case "AI · LLM":
 		return "⣿"
@@ -489,8 +576,8 @@ func catGlyph(cat string) string {
 // catShort: compact name for the horizontal group band.
 func catShort(cat string) string {
 	switch cat {
-	case "Claude Code":
-		return "claude"
+	case "AI · Agent":
+		return "agents"
 	case "AI · LLM":
 		return "ai"
 	case "Browser":
@@ -512,7 +599,7 @@ func catShort(cat string) string {
 
 // catOrder controls the band ordering when ties on memMB are broken.
 var catOrder = map[string]int{
-	"Claude Code":    0,
+	"AI · Agent":     0,
 	"AI · LLM":       1,
 	"Browser":        2,
 	"Editor":         3,

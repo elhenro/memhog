@@ -522,8 +522,8 @@ func (m model) renderList(w int) string {
 			row = styleSelBg.Render(row + strings.Repeat(" ", padN))
 		case p.group:
 			row = lipgloss.NewStyle().Foreground(catColor(p.category)).Bold(true).Render(row)
-		case p.category == "Claude Code":
-			row = lipgloss.NewStyle().Foreground(colCatClaude).Render(row)
+		case p.category == "AI · Agent":
+			row = lipgloss.NewStyle().Foreground(colCatAgent).Render(row)
 		case p.category == "AI · LLM":
 			row = lipgloss.NewStyle().Foreground(colCatLLM).Render(row)
 		case p.memMB >= 1024:

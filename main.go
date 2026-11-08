@@ -600,7 +600,7 @@ func (m *model) runGuard() {
 		if p.pid == self || m.ancestors[p.pid] {
 			continue
 		}
-		if p.category == "AI · LLM" || p.stopped || p.memMB < 200 {
+		if p.category == "AI · LLM" || p.category == "AI · Agent" || p.stopped || p.memMB < 200 {
 			continue
 		}
 		if isCritical(p.name) || isCritical(p.rawName) {
