@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,23 +20,24 @@ import (
 )
 
 type procRow struct {
-	pid       int32
-	ppid      int32
-	name      string  // display name (post-resolve)
-	rawName   string  // original p.Name() — e.g. "2.1.143"
-	user      string
-	cmdline   string
-	exe       string
-	memMB     float64
-	memPct    float32
-	cpu       float64
-	stopped   bool
-	category  string
-	version   string // optional version suffix (e.g. claude code 2.1.143)
-	createMs  int64  // process start, unix ms
-	threads   int32
-	trend     int8  // -1 down, 0 flat, +1 up vs prev tick
-	deltaMB   float64
+	pid      int32
+	ppid     int32
+	name     string // display name (post-resolve)
+	family   string // app family: display name with Helper/suffix stripped
+	rawName  string // original p.Name() — e.g. "2.1.143"
+	user     string
+	cmdline  string
+	exe      string
+	memMB    float64
+	memPct   float32
+	cpu      float64
+	stopped  bool
+	category string
+	version  string // optional version suffix (e.g. claude code 2.1.143)
+	createMs int64  // process start, unix ms
+	threads  int32
+	trend    int8 // -1 down, 0 flat, +1 up vs prev tick
+	deltaMB  float64
 }
 
 // procCache holds per-pid memo of fields that never change for a given pid.
@@ -103,11 +107,12 @@ func evictMissing(seen map[int32]bool) {
 }
 
 type refreshMsg struct {
-	vm   *mem.VirtualMemoryStat
-	cpu  float64
-	load *load.AvgStat
+	vm    *mem.VirtualMemoryStat
+	swap  *mem.SwapMemoryStat
+	cpu   float64
+	load  *load.AvgStat
 	procs []procRow
-	err  error
+	err   error
 }
 
 func refreshCmd() tea.Cmd {
@@ -122,20 +127,51 @@ func refreshCmd() tea.Cmd {
 			cpuTotal = cpuPcts[0]
 		}
 		la, _ := load.Avg()
+		sw, _ := mem.SwapMemory()
 		ps, err := process.Processes()
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		rows := fetchProcsParallel(ps)
-		return refreshMsg{vm: vm, cpu: cpuTotal, load: la, procs: rows}
+		rows := fetchProcsParallel(ps, stoppedPids())
+		return refreshMsg{vm: vm, swap: sw, cpu: cpuTotal, load: la, procs: rows}
 	}
+}
+
+// stoppedPids returns the set of stopped (SIGSTOP'd) processes using one
+// `ps` call. gopsutil's per-process Status() costs ~3.5ms each on macOS,
+// which made a single refresh take longer than the tick interval.
+func stoppedPids() map[int32]bool {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,stat=").Output()
+	if err != nil {
+		return nil
+	}
+	m := make(map[int32]bool, len(out)/16)
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(f[0])
+		if err != nil {
+			continue
+		}
+		if strings.Contains(f[1], "T") {
+			m[int32(pid)] = true
+		}
+	}
+	return m
 }
 
 // fetchProcsParallel pulls per-proc dynamic fields concurrently. The fixed
 // fields (exe/cmdline/name/createTime) live in procCache and are only fetched
 // once per pid; on subsequent ticks we only pull MemoryInfo + CPUPercent +
 // Status, which are the hot syscalls.
-func fetchProcsParallel(ps []*process.Process) []procRow {
+func fetchProcsParallel(ps []*process.Process, stopped map[int32]bool) []procRow {
 	workers := runtime.NumCPU() * 2
 	if workers > 32 {
 		workers = 32
@@ -148,7 +184,7 @@ func fetchProcsParallel(ps []*process.Process) []procRow {
 		go func() {
 			defer wg.Done()
 			for p := range in {
-				if r, ok := buildRow(p); ok {
+				if r, ok := buildRow(p, stopped[p.Pid]); ok {
 					out <- r
 				}
 			}
@@ -160,16 +196,21 @@ func fetchProcsParallel(ps []*process.Process) []procRow {
 	close(in)
 	go func() { wg.Wait(); close(out) }()
 	rows := make([]procRow, 0, len(ps))
+	// evict against the enumerated pid set, not the rows we managed to read:
+	// protected processes (MemoryInfo can fail) would otherwise be re-resolved
+	// from scratch and lose their trend baseline on every tick.
 	seen := make(map[int32]bool, len(ps))
+	for _, p := range ps {
+		seen[p.Pid] = true
+	}
 	for r := range out {
 		rows = append(rows, r)
-		seen[r.pid] = true
 	}
 	evictMissing(seen)
 	return rows
 }
 
-func buildRow(p *process.Process) (procRow, bool) {
+func buildRow(p *process.Process, isStopped bool) (procRow, bool) {
 	mi, err := p.MemoryInfo()
 	if err != nil || mi == nil {
 		return procRow{}, false
@@ -177,13 +218,7 @@ func buildRow(p *process.Process) (procRow, bool) {
 	e := getOrFillCache(p)
 	mp, _ := p.MemoryPercent()
 	cpuP, _ := p.CPUPercent()
-	st, _ := p.Status()
-	stopped := false
-	for _, s := range st {
-		if s == "T" || s == "stop" || strings.Contains(strings.ToLower(s), "stop") {
-			stopped = true
-		}
-	}
+	stopped := isStopped
 	th, _ := p.NumThreads()
 	ppid, _ := p.Ppid()
 	memMB := float64(mi.RSS) / 1024 / 1024
@@ -193,9 +228,9 @@ func buildRow(p *process.Process) (procRow, bool) {
 	if had {
 		delta = memMB - prev
 		switch {
-		case delta > 8:
+		case delta >= 1:
 			trend = +1
-		case delta < -8:
+		case delta <= -1:
 			trend = -1
 		}
 	}
@@ -203,6 +238,7 @@ func buildRow(p *process.Process) (procRow, bool) {
 		pid:      p.Pid,
 		ppid:     ppid,
 		name:     e.disp,
+		family:   familyName(e.disp),
 		rawName:  e.rawName,
 		user:     e.username,
 		cmdline:  e.cmd,
@@ -221,6 +257,31 @@ func buildRow(p *process.Process) (procRow, bool) {
 }
 
 var versionRe = regexp.MustCompile(`^\d+\.\d+\.\d+(\.\d+)?$`)
+
+// familyName collapses per-helper process names into the owning app, so
+// "Brave Browser Helper (Renderer)" and "Brave Browser" become one row.
+func familyName(n string) string {
+	n = strings.TrimSpace(n)
+	for _, suf := range []string{
+		" Helper (Renderer)",
+		" Helper (GPU)",
+		" Helper (Plugin)",
+		" Helper (Network)",
+		" Helper (Alerts)",
+		" Helper",
+		" Renderer",
+		" (Renderer)",
+	} {
+		if strings.HasSuffix(n, suf) {
+			n = strings.TrimSuffix(n, suf)
+			break
+		}
+	}
+	if n == "" {
+		return "?"
+	}
+	return n
+}
 
 // resolveDisplay returns (displayName, optionalVersion).
 // when raw name is version-only (e.g. "2.1.143"), we look at exe/cmdline to

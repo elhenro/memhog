@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -52,21 +52,57 @@ func buildAncestors(pid int32) map[int32]bool {
 	return out
 }
 
-// hasAttachedTTY: shells out to lsof to detect /dev/ttys* fds.
-// matches bash script; macOS gopsutil lacks OpenFiles.
-func hasAttachedTTY(pid int32) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "lsof", "-p", strconv.Itoa(int(pid))).Output()
-	if err != nil {
-		return false
+// ttyPids reports which of pids have a /dev/ttys* fd open, using a single
+// lsof invocation. macOS gopsutil lacks OpenFiles, and one call per pid
+// would freeze the UI for up to 800ms per worker.
+// lookPath is a test seam for the lsof availability check.
+var lookPath = exec.LookPath
+
+// ttyPids reports pids with a /dev/ttys* fd open. ok=false means detection was
+// impossible (no lsof, timeout): callers must then treat every result as live
+// rather than reaping sessions they cannot see.
+func ttyPids(pids []int32) (map[int32]bool, bool) {
+	out := make(map[int32]bool, len(pids))
+	if len(pids) == 0 {
+		return out, true
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "/dev/ttys") {
-			return true
+	if _, err := lookPath("lsof"); err != nil {
+		return nil, false
+	}
+	parts := make([]string, len(pids))
+	for i, pid := range pids {
+		parts[i] = strconv.Itoa(int(pid))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	// lsof exits 1 when any requested pid has exited, but still prints the
+	// live ones: dropping that output would mark every pty-host idle and let
+	// cleanup reap sessions somebody is using. -F gives field output, safe for
+	// command names containing spaces.
+	raw, err := exec.CommandContext(ctx, "lsof", "-F", "pn", "-p", strings.Join(parts, ",")).Output()
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	if err != nil && len(raw) == 0 {
+		return nil, false
+	}
+	var cur int32
+	for _, line := range strings.Split(string(raw), "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			if pid, err := strconv.Atoi(line[1:]); err == nil {
+				cur = int32(pid)
+			}
+		case 'n':
+			if cur != 0 && strings.HasPrefix(line[1:], "/dev/ttys") {
+				out[cur] = true
+			}
 		}
 	}
-	return false
+	return out, true
 }
 
 type cleanupPlan struct {
@@ -94,6 +130,12 @@ func isAnthropicOwned(p procRow) bool {
 	if strings.Contains(name, "anthropic") || strings.Contains(raw, "anthropic") {
 		return true
 	}
+	// an editor/pager/shell that merely has a claude path in its arguments is
+	// not anthropic-owned — nuking someone's `vim ~/.claude/settings.json`
+	// would be a nasty surprise.
+	if isPathToolExe(exe) {
+		return false
+	}
 	for _, needle := range []string{
 		"/.local/share/claude/",
 		"/.local/bin/claude",
@@ -110,10 +152,22 @@ func isAnthropicOwned(p procRow) bool {
 	return false
 }
 
+// isPathToolExe: tools that commonly carry arbitrary file paths as arguments.
+func isPathToolExe(exe string) bool {
+	switch strings.ToLower(filepath.Base(exe)) {
+	case "vim", "nvim", "vi", "nano", "emacs", "pico", "ed",
+		"less", "more", "most", "bat", "cat", "tail", "head",
+		"grep", "egrep", "fgrep", "rg", "ag", "fd", "find", "ls",
+		"open", "code", "cursor", "zed", "subl", "atom":
+		return true
+	}
+	return false
+}
+
 type nukePlan struct {
-	targets   []procRow
-	keptSelf  int // memhog pid + ancestor chain (shell, terminal, parent claude)
-	totalMB   float64
+	targets  []procRow
+	keptSelf int // memhog pid + ancestor chain (shell, terminal, parent claude)
+	totalMB  float64
 }
 
 // planClaudeNuke: every anthropic-owned proc except ourselves + ancestors.
@@ -135,6 +189,13 @@ func planClaudeNuke(procs []procRow, selfPid int32, ancestors map[int32]bool) nu
 }
 
 func planClaudeCleanup(procs []procRow, ancestors map[int32]bool) cleanupPlan {
+	var ptyHosts []int32
+	for _, p := range procs {
+		if isClaudePtyHost(p.cmdline) && !ancestors[p.pid] {
+			ptyHosts = append(ptyHosts, p.pid)
+		}
+	}
+	live, ttyKnown := ttyPids(ptyHosts)
 	pl := cleanupPlan{}
 	for _, p := range procs {
 		if isClaudeDaemonRoot(p.cmdline) {
@@ -147,7 +208,7 @@ func planClaudeCleanup(procs []procRow, ancestors map[int32]bool) cleanupPlan {
 		if ancestors[p.pid] {
 			continue
 		}
-		if isClaudePtyHost(p.cmdline) && hasAttachedTTY(p.pid) {
+		if isClaudePtyHost(p.cmdline) && (!ttyKnown || live[p.pid]) {
 			pl.keptTTY++
 			continue
 		}
@@ -159,18 +220,33 @@ func planClaudeCleanup(procs []procRow, ancestors map[int32]bool) cleanupPlan {
 // cleanupTermAll: SIGTERM each target. KILL escalation runs as a delayed cmd.
 func cleanupTermAll(targets []procRow) {
 	for _, t := range targets {
-		_ = syscall.Kill(int(t.pid), syscall.SIGTERM)
+		_ = sendSignal(t.pid, actTerm)
 	}
 }
 
-type cleanupEscalateMsg struct{ pids []int32 }
+type cleanupEscalateMsg struct{ targets []procRow }
 
 func cleanupEscalateCmd(targets []procRow) tea.Cmd {
-	pids := make([]int32, 0, len(targets))
-	for _, t := range targets {
-		pids = append(pids, t.pid)
-	}
+	saved := append([]procRow(nil), targets...)
 	return tea.Tick(1*time.Second, func(time.Time) tea.Msg {
-		return cleanupEscalateMsg{pids: pids}
+		return cleanupEscalateMsg{targets: saved}
 	})
+}
+
+// stillSameProcess guards the SIGKILL escalation against pid reuse during the
+// 1s grace period: a pid that now belongs to a different process is skipped.
+func stillSameProcess(t procRow) bool {
+	p, err := process.NewProcess(t.pid)
+	if err != nil {
+		return false
+	}
+	ct, err := p.CreateTime()
+	if err != nil {
+		return false
+	}
+	diff := ct - t.createMs
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= 1000
 }

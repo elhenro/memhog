@@ -12,7 +12,7 @@ If you run Claude Code, Cursor, an Ollama daemon, a couple browsers, and Docker 
 
 memhog adds three things `htop` doesn't:
 
-- **Categorical grouping.** Process families (Claude Code, AI · LLM, Browser, Editor, VM, Runtime, …) collapse into a one-line band at the top, with per-group memory totals and counts. Press `1`–`9` to filter to a category.
+- **Two levels of grouping.** Process families (Claude Code, AI · LLM, Browser, Editor, VM, Runtime, …) collapse into a one-line band at the top, and the list itself is grouped by *app*: 32 `Brave Browser Helper (Renderer)` procs become one `Brave Browser ×32 6.3GB` row. Press `e` to expand a group in place, `u` to fall back to one row per process. Press `1`–`9` to filter to a category.
 - **Claude lifecycle awareness.** `C` reaps idle `--bg-spare` / `--bg-pty-host` workers but keeps the daemon root and any pty-host with a live TTY. `X` nukes everything Anthropic-owned (daemon, foreground claude, MCP helpers, claude.app) — except your own ancestor chain, so you can't accidentally kill the shell you're sitting in.
 - **A memory guard.** `L` toggles a watchdog that auto-pauses (SIGSTOP, not SIGKILL) the biggest non-LLM, non-system process when available RAM drops below your cap. Cap is adjustable live with `+` / `-`.
 
@@ -55,20 +55,22 @@ That's the whole CLI.
 | `g` / `G` | top / bottom |
 | `ctrl-d` / `ctrl-u` | half-page |
 | `ctrl-f` / `ctrl-b` / `pgdn` / `pgup` | page |
-| `/` | filter (incremental, case-insensitive) |
-| `c` | clear filter |
-| `1`–`9` | filter to the Nth group from the band |
-| `0` | clear group filter |
-| `s` | cycle sort: `mem → cpu → category → name → time → pid` |
+| `/` | filter (incremental, case-insensitive; `esc` cancels, pasted text works) |
+| `c` / `0` | clear all filters |
+| `1`–`9` | filter to the Nth group from the band (press again to clear) |
+| `s` | cycle sort: `mem → cpu → Δ (growth) → category → name → time → pid` |
 | `n` | toggle raw process names (show pre-resolution names — useful when display name guessed wrong) |
-| `d` | toggle the detail pane for the selected process |
+| `e` / `enter` | expand / collapse the selected app group in place |
+| `u` | toggle grouping: app families vs one row per process |
+| `d` | toggle the detail pane for the selected row (group summary or process) |
 | `?` | toggle key help |
 
 ### Process control
 | key | action |
 |---|---|
-| `space` / `p` | pause selected (SIGSTOP) |
-| `r` | resume selected (SIGCONT) |
+| `space` / `p` | pause selected row (a collapsed group pauses all its members) |
+| `r` | resume selected row (all members of a collapsed group) |
+| `R` | resume every paused process at once |
 | `t` | terminate selected (SIGTERM, confirm) |
 | `K` | kill selected (SIGKILL, confirm) |
 | `C` | claude-cleanup: reap idle `--bg-spare` / `--bg-pty-host` (confirm) |
@@ -111,13 +113,15 @@ The classifier is heuristic and lives in `proc.go` — PRs welcome to expand it.
 - **Claude nuke (`X`) never kills memhog's own ancestor chain** — walks parent PIDs up to 20 hops at startup and excludes them. So the shell / terminal / parent claude session that launched memhog survives.
 - **Claude cleanup (`C`) keeps the daemon root** and any pty-host worker with a `/dev/ttys*` open (someone is actively using it). Escalates SIGTERM → SIGKILL after 1s for unresponsive targets.
 - **Guard (`L`) refuses to touch** `kernel_task`, `launchd`, `WindowServer`, `loginwindow`, `coreaudio`, `syslogd`, `configd`, `powerd`, ollama, omlx, memhog itself, and anything already stopped.
-- **Per-process actions always confirm** before sending signals.
+- **Per-process actions always confirm** before sending signals, and `t` / `K` / `space` refuse to touch memhog itself, its ancestor chain, or kernel-critical processes.
 
 ## Platform support
 
 - **macOS** — primary target. Tested on arm64 (M-series) and amd64.
 - **Linux** — should work; categorization heuristics tuned for macOS process names (Claude Code Helper, Code Helper (Renderer), etc.) so some categories may land in "Other".
-- **Windows** — gopsutil supports it; not tested. PRs welcome.
+- **Windows** — builds and runs (list, sort, filter, term/kill). Windows has no
+  `SIGSTOP`, so pause/resume and the memory guard are disabled there and say so. TTY-aware
+  claude-cleanup keeps pty-hosts when `lsof` is unavailable.
 
 ## Roadmap
 
